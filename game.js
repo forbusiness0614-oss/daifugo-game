@@ -67,19 +67,24 @@ function afterPlay(who,a,wasSp3){if(finish.length===4)return;if(a.n===8||wasSp3|
  let specials=[];if(a.n===12&&rules.queen)specials.push({kind:'queen',max:a.len,remaining:a.len});if(a.n===7&&rules.seven)specials.push({kind:'seven',max:a.len});if(a.n===10&&rules.ten)specials.push({kind:'ten',max:a.len});
  if(specials.length&&players[who].hand.length){showEvent(specials[0].kind==='queen'?'Qボンバー！ ×'+a.len:specials[0].kind==='seven'?'7渡し！ 最大'+a.len+'枚':'10捨て！ 最大'+a.len+'枚');phase={...specials[0],who,rest:specials.slice(1)};selected.clear();current=who;render();schedule();return}
  advance(who)}
+// Only players who can still respond to the current pile receive a turn.
+function nextResponder(from){
+ for(let i=1;i<=4;i++){
+  const k=(from+i)%4;
+  if(active(k)&&k!==last&&!passes.has(k))return k;
+ }
+ return -1;
+}
 function advance(who){
- let k=next(who);if(k<0){endGame();return}
- // Skipped players have forfeited their opportunity to respond to this pile.
- // Never make the last player beat their own cards when the turn circles back.
- for(let i=0;i<skipNext;i++){
-   if(k===last){break}
-   passes.add(k);
-   k=next(k);
+ if(!pile){current=next(who);if(current<0){endGame();return}render();schedule();return}
+ let k=nextResponder(who);
+ // A skipped response counts as passed, but never consumes the pile leader's turn.
+ for(let i=0;i<skipNext&&k>=0;i++){
+  passes.add(k);
+  k=nextResponder(k);
  }
  skipNext=0;
- if(pile&&(k===last||!players.some((p,i)=>active(i)&&i!==last&&!passes.has(i)))){
-   clearPile(last>=0?last:who);return;
- }
+ if(k<0){clearPile(last);return}
  current=k;render();schedule();
 }
 function illegalFinish(cs,a,wasSp3){if(!rules.forbid)return false;return cs.some(c=>c.joker||c.n===8||c.n===15||(revolution&&c.n===3))||wasSp3}
@@ -99,10 +104,7 @@ function doPass(who){
  // The player who last played should never be asked to pass on their own pile.
  if(who===last){clearPile(who);return}
  notice(players[who].name+'がパス');passes.add(who);
- let k=next(who);if(k<0){endGame();return}
- const othersRemaining=players.some((p,i)=>active(i)&&i!==last&&!passes.has(i));
- if(!othersRemaining||k===last){clearPile(last>=0?last:k);return}
- current=k;render();schedule();
+ advance(who);
 }
 function completeSpecial(cs){if(!phase)return;const {who,kind,rest,max}=phase;const hand=players[who].hand;
  if(kind==='queen'&&cs.length===1){/* handled by Q rank picker below */}if(kind==='seven'&&cs.length>0&&cs.length<=max){let to=next(who);if(to!==who&&to>=0){let ids=new Set(cs.map(c=>c.id));players[who].hand=hand.filter(c=>!ids.has(c.id));players[to].hand.push(...cs);sortHand(players[to].hand);notice(players[who].name+'が'+players[to].name+'に'+cs.length+'枚渡した');showEvent('7渡し！ '+cs.length+'枚')}}
