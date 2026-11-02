@@ -5,6 +5,7 @@ let configured=Object.fromEntries(Object.keys(ruleNames).map(k=>[k,true])),rules
 let players=[],current=0,pile=null,last=-1,passes=new Set(),selected=new Set(),revolution=false,back=false,lock=null,numberLock=null,finish=[],game=0,busy=false,logs=[],timer=null,phase=null,skipNext=0,previousRanking=null;
 const nval=c=>c.joker?16:c.n;
 function strength(n){return (revolution!==back)?18-n:n}
+function numberStep(){return revolution!==back?-1:1}
 function power(c){return c.joker?99:strength(c.n)}
 function sortHand(h){h.sort((a,b)=>nval(a)-nval(b)||suits.indexOf(a.s)-suits.indexOf(b.s))}
 function rankName(n){return ({11:'J',12:'Q',13:'K',14:'A',15:'2'}[n]||String(n))}
@@ -58,11 +59,14 @@ function render(){if(!players.length)return;
 }
 function showRevolution(active){const el=$('revolutionFx');el.textContent=active?'革命！ 強さ逆転！':'革命返し！ 元に戻る！';el.classList.remove('hidden');el.classList.remove('show');void el.offsetWidth;el.classList.add('show');clearTimeout(revolutionFxTimer);revolutionFxTimer=setTimeout(()=>el.classList.add('hidden'),1300)}
 let revolutionFxTimer=null,eventFxTimer=null,eventHoldUntil=0;function showEvent(message){const el=$('eventFx');el.textContent=message;eventHoldUntil=Date.now()+1850;el.classList.remove('hidden','event-show');void el.offsetWidth;el.classList.add('event-show');clearTimeout(eventFxTimer);eventFxTimer=setTimeout(()=>el.classList.add('hidden'),1850)}
-function schedule(){clearTimeout(timer);if(pendingExchange)return;if(finish.length===4)return;if(phase){if(phase.who===0){busy=false;render();return}busy=true;render();timer=setTimeout(()=>{busy=false;cpuSpecial()},Math.max(1050,eventHoldUntil-Date.now()+220));return}
+let bombTimer=null,bombAnimating=false;
+function cancelBomb(){clearTimeout(bombTimer);bombTimer=null;bombAnimating=false}
+function schedule(){if(bombAnimating)return;clearTimeout(timer);if(pendingExchange)return;if(finish.length===4)return;if(phase){if(phase.who===0){busy=false;render();return}busy=true;render();timer=setTimeout(()=>{busy=false;cpuSpecial()},Math.max(1050,eventHoldUntil-Date.now()+220));return}
  if(current===0){busy=false;render();return}busy=true;render();timer=setTimeout(()=>{busy=false;cpuTurn()},Math.max(1050,eventHoldUntil-Date.now()+220))}
 function clearPile(leader,reason='場が流れた！'){pile=null;last=-1;passes.clear();lock=null;numberLock=null;back=false;skipNext=0;current=active(leader)?leader:next(leader);notice(players[leader].name+'：'+reason);showEvent(reason);render();schedule()}
 function afterPlay(who,a,wasSp3){if(finish.length===4)return;if(a.n===8||wasSp3||(rules.rokuro&&a.type==='set'&&a.n===6&&a.len===2)||(rules.nine&&a.type==='set'&&a.n===9&&a.len===2)){let reason=wasSp3?'スペ3返し！':a.n===8?'8切り！':a.n===6?'ろくろ首！':a.n===9?'9の2枚切り！':'場が流れた！';clearPile(who,reason);return}
  if(a.n===11&&rules.back){back=!back;notice('11バック！ 強さが一時的に逆転！');showEvent('11バック！')}
+ if(numberLock!==null)numberLock=a.n+numberStep();
  if(a.n===5&&rules.skip){skipNext+=a.len;notice('5飛ばし！ '+a.len+'人飛ばす');showEvent('5飛ばし！ '+a.len+'人')}if(a.n===13&&rules.king){skipNext+=a.len;notice('Kスキップ！ '+a.len+'人飛ばす');showEvent('Kスキップ！ '+a.len+'人')}
  let specials=[];if(a.n===12&&rules.queen)specials.push({kind:'queen',max:a.len,remaining:a.len});if(a.n===7&&rules.seven)specials.push({kind:'seven',max:a.len});if(a.n===10&&rules.ten)specials.push({kind:'ten',max:a.len});
  if(specials.length&&players[who].hand.length){showEvent(specials[0].kind==='queen'?'Qボンバー！ ×'+a.len:specials[0].kind==='seven'?'7渡し！ 最大'+a.len+'枚':'10捨て！ 最大'+a.len+'枚');phase={...specials[0],who,rest:specials.slice(1)};selected.clear();current=who;render();schedule();return}
@@ -90,10 +94,10 @@ function advance(who){
 function illegalFinish(cs,a,wasSp3){if(!rules.forbid)return false;return cs.some(c=>c.joker||c.n===8||c.n===15||(revolution&&c.n===3))||wasSp3}
 function doPlay(who,cs){if(!valid(cs)){if(who===0)notice('その組み合わせは出せないよ');render();return}
  let a=analyze(cs),wasSp3=sp3(cs),old=pile&&pile.a;const ids=new Set(cs.map(c=>c.id));players[who].hand=players[who].hand.filter(c=>!ids.has(c.id));selected.clear();
- let newLock=lock;let newNumberLock=numberLock;if(old&&!a.joker){if(rules.shibari&&!newLock&&old.type===a.type&&old.suits===a.suits&&!a.wild)newLock=a.suits;if(rules.numberLock&&newNumberLock===null&&old.type==='set'&&a.type==='set'&&old.n>=3&&old.n<=14&&a.n===old.n+1)newNumberLock=a.n+1;} 
+ let newLock=lock;let newNumberLock=numberLock;if(old&&!a.joker){if(rules.shibari&&!newLock&&old.type===a.type&&old.suits===a.suits&&!a.wild)newLock=a.suits;if(rules.numberLock&&newNumberLock===null&&old.type==='set'&&a.type==='set'&&!old.joker&&a.n===old.n+numberStep())newNumberLock=a.n+numberStep();if(newNumberLock!==null)newNumberLock=a.n+numberStep();}
  pile={cards:[...cs],a,by:who};last=who;passes.clear();lock=newLock;numberLock=newNumberLock;
  notice(players[who].name+'：'+cs.map(name).join('・')+' を出した'+(lock?'（絵柄縛り）':'')+(numberLock!==null?'（数字縛り）':''));
- if((!old||!old.joker)&&((lock&&!old?.suits?.includes('*')&&old?.suits===a.suits)||(numberLock!==null&&old?.n+1===a.n))){showEvent([lock?'絵柄縛り！':'',numberLock!==null?'数字縛り！':''].filter(Boolean).join(' ＋ '))}
+ if((!old||!old.joker)&&((lock&&!old?.suits?.includes('*')&&old?.suits===a.suits)||(numberLock!==null&&old?.n+numberStep()===a.n))){showEvent([lock?'絵柄縛り！':'',numberLock!==null?'数字縛り！':''].filter(Boolean).join(' ＋ '))}
  if(rules.revolution&&a.len>=4&&(a.type==='set'||a.type==='run')){revolution=!revolution;notice(revolution?'革命発動！ 3が最強・2が最弱！':'革命返し！ カードの強さが元に戻った！');showRevolution(revolution)}
  if(players[who].hand.length===0){if(illegalFinish(cs,a,wasSp3)){notice(players[who].name+'は反則上がり！ 最下位確定');players[who].forbidden=true;finish.push(who);players[who].hand=[];if(finish.length===3){for(let j=0;j<4;j++)if(!finish.includes(j))finish.push(j);endGame();return}}
  else{finishPlayer(who);if(finish.length===4)return}}
@@ -115,11 +119,11 @@ function completeSpecial(cs){if(!phase)return;const {who,kind,rest,max}=phase;co
 function chooseCpuRank(){let counts={};for(let p of players)for(let c of p.hand)if(!c.joker)counts[c.n]=(counts[c.n]||0)+1;return Number(Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]?.[0]||3)}
 function completeQueen(rank){
  if(!phase||phase.kind!=='queen'||busy)return;
- const who=phase.who, rest=phase.rest||[],remaining=phase.remaining||1;
+ const who=phase.who, rest=phase.rest||[],remaining=phase.remaining||1,max=phase.max;
  const label=({11:'J',12:'Q',13:'K',14:'A',15:'2'}[rank]||rank);
  const counts=players.map(p=>p.hand.filter(c=>!c.joker&&c.n===rank).length);
  const total=counts.reduce((a,b)=>a+b,0);
- busy=true;clearTimeout(timer);selected.clear();
+ busy=true;bombAnimating=true;clearTimeout(timer);selected.clear();
  const fx=$('bombFx');
  $('bombTitle').textContent=players[who].name+'のQボンバー！ '+(phase.max-remaining+1)+'/'+phase.max+'回目';
  $('bombRank').textContent=label;
@@ -128,17 +132,17 @@ function completeQueen(rank){
  fx.classList.remove('hidden');fx.classList.remove('blast');
  render();
  document.querySelectorAll('#hand .card').forEach(el=>{let c=players[0].hand.find(x=>x.id===el.dataset.id);if(c&&!c.joker&&c.n===rank)el.classList.add('bomb-target')});
- timer=setTimeout(()=>{
+ bombTimer=setTimeout(()=>{
   fx.classList.add('blast');
   document.querySelectorAll('#hand .bomb-target').forEach(el=>el.classList.add('bomb-vanish'));
-  timer=setTimeout(()=>{
+  bombTimer=setTimeout(()=>{
    for(let p of players)p.hand=p.hand.filter(c=>c.joker||c.n!==rank);
    fx.classList.add('hidden');fx.classList.remove('blast');
-   phase=null;busy=false;
+   phase=null;busy=false;bombAnimating=false;bombTimer=null;
    notice('Qボンバー！ '+label+'を全員の手札から'+total+'枚捨てた');
-   if(remaining>1){phase={kind:'queen',who,rest,max:phase.max,remaining:remaining-1};notice('Qボンバー：あと'+(remaining-1)+'回、数字を選択！');showEvent('Qボンバー！ 次は'+(phase.max-remaining+2)+'回目');render();schedule();return}
    for(let i=0;i<4;i++)if(players[i].hand.length===0&&!finish.includes(i))finishPlayer(i);
    if(finish.length>=4){render();return}
+   if(remaining>1&&active(who)){phase={kind:'queen',who,rest,max,remaining:remaining-1};notice('Qボンバー：あと'+(remaining-1)+'回、数字を選択！');showEvent('Qボンバー！ 次は'+(max-remaining+2)+'回目');render();schedule();return}
    if(rest.length&&players[who].hand.length){phase={...rest[0],who,rest:rest.slice(1)};render();schedule();return}
    advance(who);
   },750);
@@ -149,7 +153,7 @@ function cpuOptions(h){let opts=[];for(let c of h)if(valid([c]))opts.push([c]);l
  let joker=h.find(c=>c.joker);if(joker){for(let g of Object.values(groups))for(let n=1;n<=Math.min(3,g.length);n++)if(valid([...g.slice(0,n),joker]))opts.push([...g.slice(0,n),joker]);}if(rules.kaidan){for(let s of suits){let cards=h.filter(c=>c.s===s&&!c.joker).sort((a,b)=>a.n-b.n);for(let i=0;i<cards.length;i++){let seq=[cards[i]];for(let j=i+1;j<cards.length&&cards[j].n===seq[seq.length-1].n+1;j++){seq.push(cards[j]);if(seq.length>=3&&valid(seq))opts.push([...seq]);if(joker&&seq.length>=2&&valid([...seq,joker]))opts.push([...seq,joker])}}}}
  return opts}
 function cpuTurn(){if(current===0||finish.length===4)return;let opts=cpuOptions(players[current].hand);if(!opts.length){doPass(current);return}opts.sort((x,y)=>{let a=analyze(x),b=analyze(y);return pile?a.pow-b.pow||y.length-x.length:y.length-x.length||a.pow-b.pow});doPlay(current,opts[0])}
-function endGame(){busy=true;clearTimeout(timer);phase=null;render();const labels=['大富豪','富豪','貧民','大貧民'];let order=[...finish];if(order.length<4){for(let i=0;i<4;i++)if(!order.includes(i))order.push(i)}
+function endGame(){cancelBomb();busy=true;clearTimeout(timer);phase=null;render();const labels=['大富豪','富豪','貧民','大貧民'];let order=[...finish];if(order.length<4){for(let i=0;i<4;i++)if(!order.includes(i))order.push(i)}
  // Forbidden finishes are always relegated to last.
  let forbidden=order.filter(i=>players[i].forbidden);order=order.filter(i=>!players[i].forbidden).concat(forbidden);
  previousRanking=order;$('modalTitle').textContent='ゲーム終了！';$('modalText').innerHTML=order.map((id,i)=>labels[i]+'：'+players[id].name).join('<br>')+'<br><br>次のゲームではカード交換があります。';$('start').textContent='次のゲームへ';$('overlay').classList.remove('hidden')}
@@ -199,6 +203,7 @@ function finishExchange(){
  render();schedule();
 }
 function newGame(){
+ cancelBomb();
  clearTimeout(timer);clearTimeout(revolutionFxTimer);clearTimeout(eventFxTimer);eventHoldUntil=0;$('eventFx').classList.add('hidden');$('revolutionFx').classList.add('hidden');$('bombFx').classList.add('hidden');rules={...configured};game++;
  const d=deck();
  players=[{name:'あなた'},{name:'CPU 1'},{name:'CPU 2'},{name:'CPU 3'}];
