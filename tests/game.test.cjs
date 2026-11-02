@@ -5,7 +5,7 @@ const vm=require('node:vm');
 const source=fs.readFileSync(require('node:path').join(__dirname,'../game.js'),'utf8');
 function game(){
  const elements=new Map(), timers=[],pending=new Map();let now=0;
- const element=()=>({classList:{add(){},remove(){},toggle(){}},addEventListener(){},replaceChildren(){},dataset:{}});
+ const element=()=>{const classes=new Set(['hidden']);return {classList:{add(...xs){xs.forEach(x=>classes.add(x))},remove(...xs){xs.forEach(x=>classes.delete(x))},toggle(x,on){if(on)classes.add(x);else classes.delete(x)},contains(x){return classes.has(x)}},addEventListener(){},replaceChildren(){},dataset:{}}};
  const context=vm.createContext({document:{getElementById(id){if(!elements.has(id))elements.set(id,element());return elements.get(id)},createElement:element,querySelectorAll(){return []}},localStorage:{getItem(){return null}},Date:{now:()=>now},setTimeout(fn,delay=0){timers.push(fn);pending.set(timers.length,{fn,at:now+delay});return timers.length},clearTimeout(id){pending.delete(id)},console});
  // Expose internal actions only in this test VM; production stays encapsulated.
  vm.runInContext(source.replace(/\}\)\(\);\s*$/,`globalThis.api={run(code){return eval(code)}};})();`),context);
@@ -20,7 +20,7 @@ function game(){
   }
   assert.fail('scheduler did not reach expected state');
  }
- return {run,timers,until,pending};
+ return {run,timers,until,pending,elements};
 }
 function setup(g,last=0){g.run(`pile={cards:[{n:4,s:'♠'}],a:analyze([{n:4,s:'♠'}]),by:${last}};last=${last};current=1;`)}
 function cleared(g,leader){assert.equal(g.run('pile'),null);assert.equal(g.run('current'),leader);assert.equal(g.run('passes.size'),0)}
@@ -120,4 +120,52 @@ test('CPU observes descending number and suit locks or passes when no match',()=
  g.until(()=>g.run('passes.has(2)'));assert.equal(g.run('current'),3);
  const h=game();h.run("back=true;rules.ten=false;pile={cards:[{n:10,s:'♠'}],a:analyze([{n:10,s:'♠'}]),by:0};last=0;lock='♠';numberLock=9;current=2;players[2].hand.unshift({id:'right',n:9,s:'♠'});schedule()");
  h.until(()=>h.run('last===2'));assert.equal(h.run('numberLock'),8);
+});
+function twoFinished(g){
+ g.run("$('overlay').classList.add('hidden')");
+ g.run("finish=[2,3];players[2].hand=[];players[3].hand=[];players[1].hand=[{id:'remaining',n:6,s:'♦'}];current=0;");
+}
+function ended(g,order=[2,3,0,1]){
+ assert.equal(g.elements.get('overlay').classList.contains('hidden'),false);
+ assert.equal(g.elements.get('modalTitle').textContent,'ゲーム終了！');
+ assert.equal(g.elements.get('turn').textContent,'ゲーム終了');
+ assert.deepEqual(Array.from(g.run('finish')),order);
+ assert.deepEqual(Array.from(g.run('previousRanking')),order);
+ assert.equal(g.run('gameEnded'),true);assert.equal(g.run('phase'),null);
+ assert.equal(g.run('busy'),true);assert.equal(g.pending.size,0);
+}
+test('CPU2 first, CPU3 second, human third: CPU1 keeps one card and result is shown',()=>{
+ const g=game();twoFinished(g);g.run("players[0].hand=[{id:'last',n:4,s:'♠'}];doPlay(0,[players[0].hand[0]])");
+ ended(g);assert.equal(g.run('players[1].hand.length'),1);
+});
+for(const kind of ['seven','ten','forbidden-ten','forbidden-play','queen']){
+ test(`third finish through ${kind} uses common result screen`,()=>{
+  const g=game();twoFinished(g);
+  if(kind==='forbidden-play')g.run("rules.forbid=true;players[0].hand=[{id:'two',n:15,s:'♠'}];doPlay(0,[players[0].hand[0]])");
+  else if(kind==='queen'){
+   g.run("players[0].hand=[{id:'seven',n:7,s:'♠'}];phase={who:0,kind:'queen',max:2,remaining:2,rest:[]};completeQueen(7)");
+   g.until(()=>g.run('finish.length===4'));
+  } else {
+   const forbidden=kind==='forbidden-ten';
+   g.run(`rules.forbid=${forbidden};players[0].hand=[{id:'last',n:${forbidden?8:4},s:'♠'}];phase={who:0,kind:'${kind==='seven'?'seven':'ten'}',max:1,rest:[]};completeSpecial([...players[0].hand])`);
+  }
+  const forbidden=kind.startsWith('forbidden');ended(g,forbidden?[2,3,1,0]:[2,3,0,1]);
+ });
+}
+test('end is idempotent and queued CPU callbacks cannot mutate the finished game',()=>{
+ const g=game();twoFinished(g);g.run('current=1;schedule()');const stale=g.timers.at(-1);
+ g.run("players[0].hand=[{id:'last',n:4,s:'♠'}];doPlay(0,[players[0].hand[0]])");ended(g);
+ const snapshot=g.run('JSON.stringify({finish,players,pile,current,previousRanking,logs})');
+ stale();g.run('schedule();cpuTurn();cpuSpecial();advance(1);doPass(1);endGame();finishPlayer(0);checkGameEnd()');
+ assert.equal(g.run('JSON.stringify({finish,players,pile,current,previousRanking,logs})'),snapshot);ended(g);
+});
+test('schedule repairs a three-person ranking before starting any CPU timer',()=>{
+ const g=game();twoFinished(g);g.run('finish.push(0);players[0].hand=[];current=1;schedule()');ended(g);
+});
+test('end cancels a pending Q animation and next game can start normally',()=>{
+ const g=game();queenPair(g);g.until(()=>g.run('bombAnimating'));
+ g.run('finish=[2,3,0];checkGameEnd()');ended(g);
+ g.run('newGame()');assert.equal(g.run('gameEnded'),false);assert.equal(g.run('finish.length'),0);
+ assert.equal(g.run('players.reduce((n,p)=>n+p.hand.length,0)'),53);
+ assert.equal(g.elements.get('overlay').classList.contains('hidden'),true);
 });
