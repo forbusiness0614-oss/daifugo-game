@@ -82,8 +82,16 @@ function afterPlay(who,a,wasSp3){if(checkGameEnd())return;if(a.n===8||wasSp3||(r
  if(a.n===11&&rules.back){back=!back;notice('11バック！ 強さが一時的に逆転！');showEvent('11バック！')}
  if(numberLock!==null)numberLock=a.n+numberStep();
  if(a.n===5&&rules.skip){skipNext+=a.len;notice('5飛ばし！ '+a.len+'人飛ばす');showEvent('5飛ばし！ '+a.len+'人')}if(a.n===13&&rules.king){skipNext+=a.len;notice('Kスキップ！ '+a.len+'人飛ばす');showEvent('Kスキップ！ '+a.len+'人')}
- let specials=[];if(a.n===12&&rules.queen)specials.push({kind:'queen',max:a.len,remaining:a.len});if(a.n===7&&rules.seven)specials.push({kind:'seven',max:a.len});if(a.n===10&&rules.ten)specials.push({kind:'ten',max:a.len});
- if(specials.length&&players[who].hand.length){showEvent(specials[0].kind==='queen'?'Qボンバー！ ×'+a.len:specials[0].kind==='seven'?'7渡し！ 最大'+a.len+'枚':'10捨て！ 最大'+a.len+'枚');phase={...specials[0],who,rest:specials.slice(1)};selected.clear();current=who;render();schedule();return}
+ // Special effects depend on the actual ranks played, including cards in runs.
+// A Joker used as a wildcard does not create an extra Q/10/7.
+ const played=pile.cards;
+ const countRank=n=>played.filter(c=>!c.joker&&c.n===n).length;
+ const queens=countRank(12),sevens=countRank(7),tens=countRank(10);
+ let specials=[];
+ if(queens&&rules.queen)specials.push({kind:'queen',max:queens,remaining:queens});
+ if(sevens&&rules.seven)specials.push({kind:'seven',max:sevens});
+ if(tens&&rules.ten)specials.push({kind:'ten',max:tens});
+ if(specials.length&&players[who].hand.length){showEvent(specials[0].kind==='queen'?'Qボンバー！ ×'+queens:specials[0].kind==='seven'?'7渡し！ 最大'+sevens+'枚':'10捨て！ 最大'+tens+'枚');phase={...specials[0],who,rest:specials.slice(1)};selected.clear();current=who;render();schedule();return}
  advance(who)}
 // Only players who can still respond to the current pile receive a turn.
 function nextResponder(from){
